@@ -4,13 +4,8 @@ Created on Thu Sep  9 18:29:04 2021
 
 @author: Daniel Souza - PC
 """
-arquivo = 'arquivos/nota_exemplo3.pdf'
-
-
-
 
 import pdfquery
-from lxml import etree
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -25,23 +20,25 @@ class NotaCorretagem():
     # Define a constante EPSILON
     EPSILON_ = 0.5
     
-    def __init__(self):
+    def __init__(self, arquivo = None):
         self.expressoes_ = {'data' : 'data pregão',
                            'nota' : ' nota',
                            'tabela_topo' : 'do título',
                            'tabela_fundo' : 'resumo financeiro',
-                           'liquidacao' : 'taxa de liquidação',
-                           'registro' : 'taxa de registro',
-                           'termo' : 'taxa de termo',
-                           'ana' : 'a.n.a.',
-                           'emolumentos' : 'emolumentos',
-                           'corretagem' : 'taxa operacional',
-                           'corretagem_identico' : False,
-                           'iss' : 'iss',
                            'irrf' : 'i.r.p.f.',
-                           'outras' : 'outros',
                            'total' : 'íquido para'}
         self.data = None
+        self.numero_nota = None
+        self.transacoes = None
+        self.transacoes_expandidas = None
+        self.total_compras = 0
+        self.total_vendas = 0
+        self.irrf = 0
+        self.total_liquido = 0
+        self.total_taxas = 0
+        
+        if (arquivo != None):
+            self.read_pdf(arquivo)
 
     
     
@@ -276,38 +273,66 @@ class NotaCorretagem():
         ax.set_xlim([0, 600])
         ax.set_ylim([0, 850])
         plt.show()
-        
+    
     ############################################################################
-    def pdf_processa_nota(self, to_print = False):
-        
-        # Dados a serem retornados
-        dados_gerais = {}
-        tabela = []
-        
+    def limpa_chars_(self, texto):
+        texto = texto.replace(' ', '').replace('\n','')
+        return texto.replace('.', '').replace(',', '.')
+    
+    ############################################################################
+    def pdf_get_cabecalho_(self):
         
         # Data da operação
-        #element = pdf.pq('LTPage[pageid=\'1\'] LTTextLineHorizontal:contains("Data")')[0]
         element = self.pdf_busca_itens_linha_(
             self.pdf_busca_item_texto_(self.expressoes_['data'])[0], 
             sentido = 'abaixo')[0]
-        data = datetime.strptime(element.text.replace(' ', '').replace('\n',''), "%d/%m/%Y").date()
+        data = datetime.strptime(self.limpa_chars_(element.text), "%d/%m/%Y").date()
         
-        dados_gerais['data'] = data
-        if to_print:
-            print('Data: ' + data.isoformat())
-        # Númerod a nota
+        self.data = data
+            
+        # Número da nota
         element = self.pdf_busca_itens_linha_(
             self.pdf_busca_item_texto_(self.expressoes_['nota'])[0], 
             sentido = 'abaixo')[0]
-        nota = int(element.text.replace(' ', ''))
+        nota = int(self.limpa_chars_(element.text))
         
-        dados_gerais['numero_nota'] = nota
-        if to_print:
-            print('Nota de corretagem: {}'.format(nota))
+        self.numero_nota = nota
         
+        
+        # Dados da última página
+        page = self.pdf_paginas_
+                
+        # Busca as taxa de IRRF
+        try:
+            element = self.pdf_busca_itens_linha_(
+                self.pdf_busca_item_texto_(self.expressoes_['irrf'], pg = page)[0],
+                sentido = 'direita', 
+                filtro_altura = True, 
+                centralizado = True, 
+                pg = page)[0]
+            tx_irrf = abs(float(self.limpa_chars_(element.text)))
+        except IndexError:
+            # Caso não conste na nota este campo (Modal)
+            tx_irrf = 0.0
+        self.irrf = tx_irrf
+         
+        # Busca Total líquido
+        element = self.pdf_busca_itens_linha_(
+            self.pdf_busca_item_texto_(self.expressoes_['total'], pg = page)[0],
+            sentido = 'direita', 
+            filtro_altura = True, 
+            centralizado = True, 
+            pg = page)[0]
+        total = abs(float(self.limpa_chars_(element.text)))
+        
+        self.total_liquido = total            
+            
+    ############################################################################
+    def pdf_get_transacoes(self):
+        transacoes = []
+        
+        # Varre as páginas
         for page in range(1,self.pdf_paginas_+1):
-            if to_print:
-                print("+++ PÁGINA {} +++".format(page))
     
             # Busca inicio da tabela
             tabela_inicio = self.pdf_busca_item_texto_(self.expressoes_['tabela_topo'], pg = page)[0]
@@ -318,155 +343,109 @@ class NotaCorretagem():
             limites_busca = (float(tabela_fim.get('y1')) + 0.5, 0) #TODO: trocar por EPSILON
         
             # Busca itens abaixo do local escrito 'do Título'
-            resultado = self.pdf_busca_itens_linha_(tabela_inicio, 
+            resultados = self.pdf_busca_itens_linha_(tabela_inicio, 
                                                     sentido = 'abaixo', 
                                                     limites = limites_busca, 
                                                     pg = page)
-        
-            for c in resultado:
+            
+            for resultado in resultados:
                 linha = {}
                 
                 # Obtem somente o nome do ativo
-                atv = c.text.replace('\n','').upper()
+                atv = resultado.text.replace('\n','').upper()
+                atv = ' '.join(atv.split())
                 linha['ativo'] = atv
-                if to_print:
-                    print('-------------')
-                    print(atv)
         
                 # Busca todos itens não nulos na mesma linha, a esquerda e a direita dele
-                res = self.pdf_busca_itens_linha_(c, 
+                res = self.pdf_busca_itens_linha_(resultado, 
                                                   sentido = 'horizontal', 
                                                   filtro_altura = True, 
                                                   pg = page)
-                lin = self.padroniza_linha_(c, res)
+                linha_lista = self.padroniza_linha_(resultado, res)
         
-                # Obtem os dados
+                # Obtem tipo da transação (Compra ou venda)
                 tipo = 'Venda'
                 sinal = -1
-                if lin[1] == 'c':
+                if linha_lista[1] == 'c':
                     tipo = 'Compra'
                     sinal = 1
+                    
                 linha['operacao'] = tipo
-                if to_print:
-                    print(tipo)
-        
-                qtd = int(lin[-4].replace('.', ''))
+
+                # Obtem quantidade de ativos negociados
+                qtd = int(linha_lista[-4].replace('.', ''))
                 linha['quantidade'] = qtd
-                if to_print:
-                    print('Quantidade: {}'.format(qtd))
+                
+                # Obtem preço da transação
+                preco = float(linha_lista[-3].replace(',', '.'))
+                linha['preco'] = preco
+                
+                # Calcula valor da transação (sinal negativo para venda)
+                linha['valor'] = preco * sinal * qtd
+                    
+                transacoes.append(linha)
+            
+                    
+        # Cria dataframe das transações
+        self.transacoes_expandidas = pd.DataFrame(transacoes)
         
-                preco = float(lin[-3].replace(',', '.'))
-                linha['preco'] = preco * sinal
-                if to_print:
-                    print('Preço: R${}'.format(preco))
+        # Consolida transações por ativo e tipo de operação
+        self.transacoes = self.transacoes_expandidas.groupby(['ativo', 'operacao']).sum()[['quantidade','valor']]
+        self.transacoes['preco'] = abs(self.transacoes['valor']) / self.transacoes['quantidade']
         
-                if to_print:
-                    print('Total: R${}'.format(preco*qtd))
-                    
-                tabela.append(linha)
-            
-            if page == self.pdf_paginas_:
-                """
-                if to_print:
-                    print('+-+-+-+-+-+-+-+-+-+-+-+-+')
-                # Busca as taxa de liquidação
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['liquidacao'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_liquidacao = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de liquidação: R${}".format(tx_liquidacao))
-            
-                # Busca as taxa de registro
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['registro'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_registro = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de registro: R${}".format(tx_registro))
-            
-                # Busca as taxa de termo
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['termo'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_termo = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de termo: R${}".format(tx_termo))
-            
-                # Busca as taxa de ana
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['ana'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_ana = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de A.N.A.: R${}".format(tx_ana))
-            
-                # Busca as taxa de emolumentos
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['emolumentos'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_emolumentos = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de emolumentos: R${}".format(tx_emolumentos))
-            
-                # Busca as taxa de corretagem
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['corretagem'],
-                                                           identico = expressoes[corretora]['corretagem_identico'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_corretagem = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de corretagem: R${}".format(tx_corretagem))
-                
-                
-                # Busca as taxa de ISS
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['iss'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_iss = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Taxa de ISS: R${}".format(tx_iss))
-                    
-                # Busca as taxa de Outras
-                element = buscaItensEmLinha(buscaItemTexto(expressoes[corretora]['outras'], pg = page)[0],
-                                            sentido = 'direita', filtro_altura = True, centralizado = True, pg = page)[0]
-                tx_outras = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                if to_print:
-                    print("Outras taxas: R${}".format(tx_outras))
-                """
-                # Busca as taxa de IRRF
-                try:
-                    element = self.pdf_busca_itens_linha_(
-                        self.pdf_busca_item_texto_(self.expressoes_['irrf'], pg = page)[0],
-                        sentido = 'direita', 
-                        filtro_altura = True, 
-                        centralizado = True, 
-                        pg = page)[0]
-                    tx_irrf = abs(float(element.text.replace(' ', '').replace(',', '.')))
-                except IndexError:
-                    # Caso não conste na nota este campo (Modal)
-                    tx_irrf = 0.0
-                dados_gerais['irrf'] = tx_irrf
-                if to_print:
-                    print("Taxa de I.R.R.F.: R${}".format(tx_irrf))
-            
-                
-                    
-                # Busca Total líquido
-                element = self.pdf_busca_itens_linha_(
-                    self.pdf_busca_item_texto_(self.expressoes_['total'], pg = page)[0],
-                    sentido = 'direita', 
-                    filtro_altura = True, 
-                    centralizado = True, 
-                    pg = page)[0]
-                total = abs(float(element.text.replace(' ', '').replace('.', '').replace(',', '.').replace('\n','')))
-                dados_gerais['total_liquido'] = total
-                if to_print:
-                    print("Total Líquido: R${}".format(total))
-                
-                    
-        # Cria dataframe da tabela
-        df= pd.DataFrame(tabela)
-        df['valor'] = df['preco'] * df['quantidade']
-        dados_gerais['transacoes'] = df
-        
-        return dados_gerais
+
     ############################################################################
-    
-    def read_pdf(self, file):
+    def pdf_processa_nota(self):
+        
+        self.pdf_get_cabecalho_()
+        
+        self.pdf_get_transacoes()
+        
+        # Calcula dados faltantes
+        # Total de compras
+        self.total_compras = self.transacoes_expandidas.loc[
+            self.transacoes_expandidas.operacao == "Compra", 'valor'].sum()
+        
+        # Total de vendas
+        self.total_vendas = abs(self.transacoes_expandidas.loc[
+            self.transacoes_expandidas.operacao == "Venda", 'valor'].sum())
+        
+        # Total de taxas
+        self.total_taxas = abs(abs(self.total_compras - self.total_vendas) \
+                               - self.total_liquido)
+        
+        
+        tot_operacoes = self.total_compras + self.total_vendas
+        
+        self.transacoes['taxas'] = abs(self.transacoes['valor'])/tot_operacoes * self.total_taxas
+        
+        self.transacoes['valor_liquido'] = self.transacoes['valor'] + self.transacoes['taxas']
+        
+        
+    ############################################################################
+    def __str__(self):
+        string = 'Data: ' + self.data.isoformat() + '\n'
+        string += 'Nota de corretagem: {}'.format(self.numero_nota) + '\n'
+        
+        string += '------------------------------\n'
+        string += '- Transações \n'
+        string += '------------------------------\n'
+        
+        string += str(self.transacoes) + '\n'
+        
+        string += '------------------------------\n'
+        
+        string += "Total de compras: R${:.2f}".format(self.total_compras) + '\n'
+        string += "Total de vendas: R${:.2f}".format(self.total_vendas) + '\n'
+        string += "Total de taxas: R${:.2f}".format(self.total_taxas) + '\n'
+        string += "Taxa de I.R.R.F.: R${:.2f}".format(self.irrf) + '\n'
+        
+        string += '------------------------------\n'
+        string += "Total Líquido: R${:.2f}".format(self.total_liquido) + '\n'
+        
+        return string
+    ############################################################################
+    def read_pdf(self, arquivo):
         try:
             with open(arquivo, 'rb') as file:
                 self.pdf = pdfquery.PDFQuery(file,
@@ -482,45 +461,19 @@ class NotaCorretagem():
 
                 self.pdf_paginas_ = len(self.pdf._pages)
                 
-                # Identifica a corretora
-                self.dados_nota = self.pdf_processa_nota(to_print = False)
-                self.df = self.dados_nota['transacoes'].groupby(['ativo', 'operacao']).sum()[['quantidade','valor']]
-                self.df['preco'] = abs(self.df['valor']) / self.df['quantidade']
+                # Processa Nota
+                self.dados_nota = self.pdf_processa_nota()
+                
 
             
         except FileNotFoundError:
             print("Error while openning the file.")
             # TODO: raise exception or return error?
 
-nota = NotaCorretagem()
-nota.read_pdf(arquivo)
 
-"""   
-    if not suporte:
-        print("Nota de corretagem não suportada!")
-    else:
-        print("Nota lida com sucesso!")
-        lista = dados_nota['transacoes']
-        tot_compra = lista.loc[lista.operacao == "Compra", 'valor'].sum()
-        print("Total de compras: R${:.2f}".format(tot_compra))
-        
-        tot_venda = abs(lista.loc[lista.operacao == "Venda", 'valor'].sum())
-        print("Total de vendas: R${:.2f}".format(tot_venda))
-        
-        print("Total líquido: R${:.2f}".format(dados_nota['total_liquido']))
-        
-        taxas = abs(abs(tot_compra - tot_venda) - dados_nota['total_liquido'])
-        print("Total de taxas: R${:.2f}".format(taxas))
-        
-        tot_operacoes = tot_compra + tot_venda
-        
-        df['taxa'] = abs(df['valor'])/tot_operacoes * taxas
-        
-        df['valor_liquido'] = df['valor'] + df['taxa']
-        #df.iloc[df.index.get_locs([slice(None), ['Venda']]), -1] = df.iloc[df.index.get_locs([slice(None), ['Venda']])]['valor'] \
-        #    - df.iloc[df.index.get_locs([slice(None), ['Venda']])]['taxa']
-        #df2.loc['valor_liquido'] = df2['valor'] - df2['taxa']
-        
-"""   
+
+
+
+
         
 
