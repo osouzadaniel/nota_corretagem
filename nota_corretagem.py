@@ -16,8 +16,6 @@ import pandas as pd
 
 # TODO: Multiplas notas em um único arquivo
 
-
-
 class NotaCorretagem():
     # Define a constante EPSILON
     EPSILON_ = 0.5
@@ -282,6 +280,14 @@ class NotaCorretagem():
         texto = texto.replace(' ', '').replace('\n','')
         return texto.replace('.', '').replace(',', '.')
     
+    def pdf_get_numero_nota(self, pg):
+        element = self.pdf_busca_itens_linha_(
+            self.pdf_busca_item_texto_(self.expressoes_['nota'], pg = pg)[0], 
+            sentido = 'abaixo', 
+            pg = pg)[0]
+        nota = int(self.limpa_chars_(element.text))
+        return nota
+    
     ############################################################################
     def pdf_get_cabecalho_(self):
         
@@ -296,15 +302,8 @@ class NotaCorretagem():
         
         self.data = data
             
-        # Número da nota
-        element = self.pdf_busca_itens_linha_(
-            self.pdf_busca_item_texto_(self.expressoes_['nota'], pg = pagina_inicial)[0], 
-            sentido = 'abaixo', 
-            pg = pagina_inicial)[0]
-        nota = int(self.limpa_chars_(element.text))
-        
-        self.numero_nota = nota
-        
+        # Número da nota        
+        self.numero_nota = self.pdf_get_numero_nota(pagina_inicial)
         
         # Dados da última página
         page = self.pdf_paginas_[1]
@@ -479,8 +478,74 @@ class NotaCorretagem():
 
 
 
+class LoteNotaCorretagem():
+    
+    def __init__(self, arquivo = None):
+        self.notas = []
+        self.pdf_paginas_ = (0,0)
+        
+        
+        if (arquivo != None):
+            self.read_pdf(arquivo)
+            
+    ############################################################################
+    def add_nova_nota_(self, intervalo_paginas):
+        nova_nota = NotaCorretagem()
+        nova_nota.pdf = self.pdf
+        nova_nota.pdf_paginas_ = intervalo_paginas
+        nova_nota.pdf_processa_nota()
+        
+        self.notas.append(nova_nota)
+        
+    ############################################################################
+    def pdf_processa_arquivo_(self):
+        # Define inicio
+        pg_inicio_ultima = 0
+        num_nota_ultima = None
+        
+        nota_temp = NotaCorretagem()
+        nota_temp.pdf = self.pdf
+        
+        for pg in range(self.pdf_paginas_[0], self.pdf_paginas_[1] + 1):
+            num_nota = nota_temp.pdf_get_numero_nota(pg)
+            # Verifica se o número da nota é o mesmo da página anterior
+            if(num_nota != num_nota_ultima):
+                # Se não for a primeira pagina, salva a anterior
+                if pg != 1:
+                    self.add_nova_nota_((pg_inicio_ultima, pg-1))
+                
+                # Atualiza novos valores de nota e página de inicio
+                num_nota_ultima = num_nota
+                pg_inicio_ultima = pg
+        
+        # Salva última nota
+        self.add_nova_nota_((pg_inicio_ultima, self.pdf_paginas_[1]))
+    
+    ############################################################################
+    def read_pdf(self, arquivo):
+        try:
+            with open(arquivo, 'rb') as file:
+                self.pdf = pdfquery.PDFQuery(file,
+                                        input_text_formatter= lambda x: x.lower())
+                self.pdf.load()
+                
+                # uncomment the two lines below to write the xml
+                # of the PDF to a file, helps to find coordinates of data
+                
+                #with open('xmltree.xml','wb') as f:
+                #     f.write(etree.tostring(pdf.tree, pretty_print=True))
+                #printBboxes(None)
 
+                self.pdf_paginas_ = (1, len(self.pdf._pages))
+                
+                # Processa Nota
+                self.pdf_processa_arquivo_()
+                
 
+            
+        except FileNotFoundError:
+            print("Error while openning the file.")
+            # TODO: raise exception or return error?
 
         
 

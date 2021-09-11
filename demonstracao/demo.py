@@ -8,14 +8,18 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path('.').absolute().parent))
 
-from nota_corretagem import NotaCorretagem
+from nota_corretagem import LoteNotaCorretagem
 
 
-arquivo = '../arquivos/nota_exemplo.pdf'
+arquivo = '../arquivos/lote_exemplo.pdf'
 
-nota = NotaCorretagem(arquivo)
+lote = LoteNotaCorretagem(arquivo)
 
-print(nota)
+print("Quantidade de Notas: {}".format(len(lote.notas)))
 
-print("Transações Completas:")
-print(nota.transacoes_expandidas)
+for nota in range(len(lote.notas)):
+    print("++++++++++++++++++")
+    print("++++++++++++++++++")
+    print(f"NOTA {nota+1}")
+    
+    print(lote.notas[nota])
