@@ -14,6 +14,8 @@ import math
 
 import pandas as pd
 
+# TODO: Multiplas notas em um único arquivo
+
 
 
 class NotaCorretagem():
@@ -36,6 +38,7 @@ class NotaCorretagem():
         self.irrf = 0
         self.total_liquido = 0
         self.total_taxas = 0
+        self.pdf_paginas_ = (0,0)
         
         if (arquivo != None):
             self.read_pdf(arquivo)
@@ -282,25 +285,29 @@ class NotaCorretagem():
     ############################################################################
     def pdf_get_cabecalho_(self):
         
+        pagina_inicial = self.pdf_paginas_[0]
+        
         # Data da operação
         element = self.pdf_busca_itens_linha_(
-            self.pdf_busca_item_texto_(self.expressoes_['data'])[0], 
-            sentido = 'abaixo')[0]
+            self.pdf_busca_item_texto_(self.expressoes_['data'], pg = pagina_inicial)[0], 
+            sentido = 'abaixo', 
+            pg = pagina_inicial)[0]
         data = datetime.strptime(self.limpa_chars_(element.text), "%d/%m/%Y").date()
         
         self.data = data
             
         # Número da nota
         element = self.pdf_busca_itens_linha_(
-            self.pdf_busca_item_texto_(self.expressoes_['nota'])[0], 
-            sentido = 'abaixo')[0]
+            self.pdf_busca_item_texto_(self.expressoes_['nota'], pg = pagina_inicial)[0], 
+            sentido = 'abaixo', 
+            pg = pagina_inicial)[0]
         nota = int(self.limpa_chars_(element.text))
         
         self.numero_nota = nota
         
         
         # Dados da última página
-        page = self.pdf_paginas_
+        page = self.pdf_paginas_[1]
                 
         # Busca as taxa de IRRF
         try:
@@ -332,7 +339,7 @@ class NotaCorretagem():
         transacoes = []
         
         # Varre as páginas
-        for page in range(1,self.pdf_paginas_+1):
+        for page in range(self.pdf_paginas_[0], self.pdf_paginas_[1] + 1):
     
             # Busca inicio da tabela
             tabela_inicio = self.pdf_busca_item_texto_(self.expressoes_['tabela_topo'], pg = page)[0]
@@ -459,10 +466,10 @@ class NotaCorretagem():
                 #     f.write(etree.tostring(pdf.tree, pretty_print=True))
                 #printBboxes(None)
 
-                self.pdf_paginas_ = len(self.pdf._pages)
+                self.pdf_paginas_ = (1, len(self.pdf._pages))
                 
                 # Processa Nota
-                self.dados_nota = self.pdf_processa_nota()
+                self.pdf_processa_nota()
                 
 
             

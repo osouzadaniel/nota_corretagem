@@ -11,7 +11,7 @@ sys.path.append(str(Path('.').absolute().parent))
 from nota_corretagem import NotaCorretagem
 
 
-arquivo = '../arquivos/nota_exemplo3.pdf'
+arquivo = '../arquivos/nota_exemplo.pdf'
 
 nota = NotaCorretagem(arquivo)
 
