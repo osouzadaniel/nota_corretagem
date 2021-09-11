@@ -25,7 +25,7 @@ class NotaCorretagem():
                            'nota' : ' nota',
                            'tabela_topo' : 'do título',
                            'tabela_fundo' : 'resumo financeiro',
-                           'irrf' : 'i.r.p.f.',
+                           'irrf' : 'i.r.r.f.',
                            'total' : 'íquido para'}
         self.data = None
         self.numero_nota = None
