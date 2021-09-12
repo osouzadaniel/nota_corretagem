@@ -401,6 +401,7 @@ class NotaCorretagem():
         # Consolida transações por ativo e tipo de operação
         self.transacoes = self.transacoes_expandidas.groupby(['ativo', 'operacao']).sum()[['quantidade','valor']]
         self.transacoes['preco'] = abs(self.transacoes['valor']) / self.transacoes['quantidade']
+        self.transacoes.reset_index(inplace = True)
         
 
     ############################################################################
