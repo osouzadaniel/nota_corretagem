@@ -11,7 +11,7 @@ sys.path.append(str(Path('.').absolute().parent))
 from nota_corretagem import LoteNotaCorretagem
 
 
-arquivo = '../arquivos/lote_exemplo.pdf'
+arquivo = '../arquivos/nota_exemplo_nu2.pdf'
 
 lote = LoteNotaCorretagem(arquivo)
 

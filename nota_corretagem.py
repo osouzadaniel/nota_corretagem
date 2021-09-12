@@ -360,6 +360,9 @@ class NotaCorretagem():
                 # Obtem somente o nome do ativo
                 atv = resultado.text.replace('\n','').upper()
                 atv = ' '.join(atv.split())
+                # Se for um nome muito curto, pula a linha
+                if (len(atv) < 5) or (len(atv.split()) < 2):
+                    continue
                 linha['ativo'] = atv
         
                 # Busca todos itens não nulos na mesma linha, a esquerda e a direita dele
