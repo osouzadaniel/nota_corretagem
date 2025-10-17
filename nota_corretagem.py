@@ -441,7 +441,8 @@ class NotaCorretagem():
         string += '- Transações \n'
         string += '------------------------------\n'
         
-        string += str(self.transacoes) + '\n'
+
+        string += self.transacoes.to_string(max_cols=None, max_rows=None)+ '\n'
         
         string += '------------------------------\n'
         

@@ -1,0 +1,19 @@
+[project]
+name = "nota-corretagem"
+version = "0.1.0"
+description = "Carrega dados de notas de coretagem"
+authors = [
+    {name = "Daniel Souza",email = "souzasc@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pdfquery (>=0.4.3,<0.5.0)",
+    "matplotlib (>=3.10.7,<4.0.0)",
+    "pandas (>=2.3.3,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

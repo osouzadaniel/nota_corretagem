@@ -6,12 +6,14 @@ Created on Fri Sep 10 16:20:07 2021
 """
 import sys
 from pathlib import Path
-sys.path.append(str(Path('.').absolute().parent))
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+print(str(Path(__file__).resolve().parents[1]))
 
 from nota_corretagem import LoteNotaCorretagem
 
 
-arquivo = '../arquivos/nota_exemplo_nu2.pdf'
+arquivo = '../arquivos/dani_02.pdf'
 
 lote = LoteNotaCorretagem(arquivo)
 
