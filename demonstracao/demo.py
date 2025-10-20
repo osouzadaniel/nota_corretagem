@@ -6,14 +6,17 @@ Created on Fri Sep 10 16:20:07 2021
 """
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-print(str(Path(__file__).resolve().parents[1]))
+path_root = Path(__file__).resolve().parents[1]
+sys.path.append(str(path_root))
 
 from nota_corretagem import LoteNotaCorretagem
 
+if len(sys.argv) > 1:
+    fname = sys.argv[1]
+else:
+    fname = 'nota_itau2.pdf'
 
-arquivo = '../arquivos/dani_02.pdf'
+arquivo = (path_root / 'arquivos' / fname).resolve()
 
 lote = LoteNotaCorretagem(arquivo)
 

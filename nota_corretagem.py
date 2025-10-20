@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from datetime import datetime
 import math
+from collections import defaultdict
+import re
 
 import pandas as pd
 
@@ -22,7 +24,7 @@ class NotaCorretagem():
     
     def __init__(self, arquivo = None):
         self.expressoes_ = {'data' : 'data pregão',
-                           'nota' : ' nota',
+                           'nota' : ['nr.nota', ' nota'],
                            'tabela_topo' : 'do título',
                            'tabela_fundo' : 'resumo financeiro',
                            'irrf' : 'i.r.r.f.',
@@ -279,14 +281,29 @@ class NotaCorretagem():
     def limpa_chars_(self, texto):
         texto = texto.replace(' ', '').replace('\n','')
         return texto.replace('.', '').replace(',', '.')
+
+    def extrai_float_(self, texto):
+        texto_limpo = self.limpa_chars_(texto)
+        match = re.search(r'-?\d+(?:\.\d+)?', texto_limpo)
+        if not match:
+            raise ValueError("Valor numérico não encontrado.")
+        return float(match.group())
     
     def pdf_get_numero_nota(self, pg):
-        element = self.pdf_busca_itens_linha_(
-            self.pdf_busca_item_texto_(self.expressoes_['nota'], pg = pg)[0], 
-            sentido = 'abaixo', 
-            pg = pg)[0]
-        nota = int(self.limpa_chars_(element.text))
-        return nota
+        expressoes = self.expressoes_['nota']
+        if isinstance(expressoes, str):
+            expressoes = [expressoes]
+
+        for expressao in expressoes:
+            anchors = self.pdf_busca_item_texto_(expressao, pg = pg)
+            for anchor in anchors:
+                candidatos = self.pdf_busca_itens_linha_(anchor, sentido = 'abaixo', pg = pg)
+                for candidato in candidatos:
+                    texto = self.limpa_chars_(candidato.text)
+                    if texto.isdigit():
+                        return int(texto)
+
+        raise ValueError("Não foi possível identificar o número da nota.")
     
     ############################################################################
     def pdf_get_cabecalho_(self):
@@ -310,32 +327,47 @@ class NotaCorretagem():
                 
         # Busca as taxa de IRRF
         try:
-            element = self.pdf_busca_itens_linha_(
+            elementos = self.pdf_busca_itens_linha_(
                 self.pdf_busca_item_texto_(self.expressoes_['irrf'], pg = page)[0],
                 sentido = 'direita', 
                 filtro_altura = True, 
                 centralizado = True, 
-                pg = page)[0]
-            tx_irrf = abs(float(self.limpa_chars_(element.text)))
+                pg = page)
+            tx_irrf = 0.0
+            for elemento in elementos:
+                try:
+                    tx_irrf = abs(self.extrai_float_(elemento.text))
+                    break
+                except ValueError:
+                    continue
         except IndexError:
             # Caso não conste na nota este campo (Modal)
             tx_irrf = 0.0
         self.irrf = tx_irrf
          
         # Busca Total líquido
-        element = self.pdf_busca_itens_linha_(
+        elementos_total = self.pdf_busca_itens_linha_(
             self.pdf_busca_item_texto_(self.expressoes_['total'], pg = page)[0],
             sentido = 'direita', 
             filtro_altura = True, 
             centralizado = True, 
-            pg = page)[0]
-        total = abs(float(self.limpa_chars_(element.text)))
-        
+            pg = page)
+        total = None
+        for elemento in elementos_total:
+            try:
+                total = abs(self.extrai_float_(elemento.text))
+                break
+            except ValueError:
+                continue
+        if total is None:
+            raise ValueError("Total líquido não encontrado.")
+
         self.total_liquido = total            
             
     ############################################################################
     def pdf_get_transacoes(self):
         transacoes = []
+        contador_sem_nome = 0
         
         # Varre as páginas
         for page in range(self.pdf_paginas_[0], self.pdf_paginas_[1] + 1):
@@ -345,63 +377,149 @@ class NotaCorretagem():
             # Busca inicio da tabela
             tabela_fim = self.pdf_busca_item_texto_(self.expressoes_['tabela_fundo'], pg = page)[0]
         
-            # Define os limites da busca (abaixo de 'do Titulo' e acima de 'RESUMO')
-            limites_busca = (float(tabela_fim.get('y1')) + 0.5, 0) #TODO: trocar por EPSILON
-        
-            # Busca itens abaixo do local escrito 'do Título'
-            resultados = self.pdf_busca_itens_linha_(tabela_inicio, 
-                                                    sentido = 'abaixo', 
-                                                    limites = limites_busca, 
-                                                    pg = page)
-            
-            for resultado in resultados:
-                linha = {}
-                
-                # Obtem somente o nome do ativo
-                atv = resultado.text.replace('\n','').upper()
-                atv = ' '.join(atv.split())
-                # Se for um nome muito curto, pula a linha
-                if (len(atv) < 5) or (len(atv.split()) < 2):
-                    continue
-                linha['ativo'] = atv
-        
-                # Busca todos itens não nulos na mesma linha, a esquerda e a direita dele
-                res = self.pdf_busca_itens_linha_(resultado, 
-                                                  sentido = 'horizontal', 
-                                                  filtro_altura = True, 
-                                                  pg = page)
-                linha_lista = self.padroniza_linha_(resultado, res)
-        
-                # Obtem tipo da transação (Compra ou venda)
-                tipo = 'Venda'
-                sinal = -1
-                if linha_lista[1] == 'c':
-                    tipo = 'Compra'
-                    sinal = 1
-                    
-                linha['operacao'] = tipo
+            y_top = float(tabela_inicio.get('y0')) - self.EPSILON_
+            y_bottom = float(tabela_fim.get('y1')) + self.EPSILON_
+            area = (0, y_bottom, 595, y_top)
 
-                # Obtem quantidade de ativos negociados
-                qtd = int(linha_lista[-4].replace('.', ''))
-                linha['quantidade'] = qtd
+            itens_area = self.pdf.extract([
+                ('with_parent', f"LTPage[pageid='{page}']"),
+                ('res', ':overlaps_bbox("%s, %s, %s, %s")' % area)
+            ])['res']
+
+            linhas_por_y = defaultdict(list)
+            for item in itens_area:
+                if not self.checa_nao_nulo_(item):
+                    continue
+                if float(item.get('y0')) >= y_top:
+                    continue
+                y_coord = round(float(item.get('y0')), 1)
+                linhas_por_y[y_coord].append(item)
+
+            pending_ativo_tokens = []
+
+            for _, itens_linha in sorted(linhas_por_y.items(), reverse=True):
+                itens_ordenados = sorted(itens_linha, key=lambda i: float(i.get('x0')))
+
+                itens_info = []
+                has_quantidade = False
+                candidatos_ativo = []
+
+                for item_linha in itens_ordenados:
+                    texto = item_linha.text.replace('\n', '').strip()
+                    if not texto:
+                        continue
+                    texto_superior = texto.upper()
+                    tokens_superior = texto_superior.split()
+                    x_coord = float(item_linha.get('x0'))
+                    texto_limpo = self.limpa_chars_(texto)
+
+                    itens_info.append({
+                        'texto': texto,
+                        'texto_superior': texto_superior,
+                        'tokens_superior': tokens_superior,
+                        'texto_limpo': texto_limpo,
+                        'x_coord': x_coord
+                    })
+
+                    if texto_limpo.isdigit():
+                        has_quantidade = True
+
+                    if 80 <= x_coord <= 360 and any(ch.isalpha() for ch in texto_superior):
+                        token_limpo = ' '.join(tokens_superior)
+                        if token_limpo not in {'BOVESPA', 'C VISTA', 'VISTA', 'V', 'C'}:
+                            candidatos_ativo.append(token_limpo)
+
+                if not has_quantidade:
+                    if candidatos_ativo:
+                        pending_ativo_tokens.extend(candidatos_ativo)
+                    continue
+
+                operacao = None
+                quantidade = None
+                preco = None
+                valor_bruto = None
+                combinado_tokens = candidatos_ativo + pending_ativo_tokens
+                ativo_tokens = []
+                for token in combinado_tokens:
+                    if token not in ativo_tokens:
+                        ativo_tokens.append(token)
+                pending_ativo_tokens = []
+
+                for info in itens_info:
+                    texto_superior = info['texto_superior']
+                    tokens_superior = info['tokens_superior']
+                    texto_limpo = info['texto_limpo']
+                    x_coord = info['x_coord']
+                    texto = info['texto']
+
+                    if operacao is None and x_coord < 200:
+                        if 'C' in tokens_superior:
+                            operacao = 'Compra'
+                            continue
+                        if 'V' in tokens_superior:
+                            operacao = 'Venda'
+                            continue
+
+                    if operacao is None and x_coord >= 300:
+                        if 'D' in tokens_superior:
+                            operacao = 'Compra'
+                            continue
+                        if 'C' in tokens_superior:
+                            operacao = 'Venda'
+                            continue
+
+                    if not texto_limpo:
+                        continue
+
+                    if quantidade is None and texto_limpo.isdigit():
+                        quantidade = int(texto_limpo)
+                        continue
+
+                    numero = None
+                    try:
+                        numero = self.extrai_float_(texto)
+                    except ValueError:
+                        numero = None
+
+                    if numero is not None:
+                        if quantidade is not None and preco is None:
+                            preco = numero
+                            continue
+                        if preco is not None and valor_bruto is None:
+                            valor_bruto = numero
+                            continue
+
+                if operacao is None or quantidade is None or preco is None:
+                    continue
                 
-                # Obtem preço da transação
-                preco = float(linha_lista[-3].replace(',', '.'))
-                linha['preco'] = preco
-                
-                # Calcula valor da transação (sinal negativo para venda)
-                linha['valor'] = preco * sinal * qtd
-                    
-                transacoes.append(linha)
+                ativo = ' '.join(ativo_tokens).strip()
+                ativo = ' '.join(ativo.split())
+                if not ativo:
+                    ativo = f"SEM_NOME_{contador_sem_nome}"
+                    contador_sem_nome += 1
+
+                sinal = 1 if operacao == 'Compra' else -1
+                valor_total = valor_bruto if valor_bruto is not None else preco * quantidade
+
+                transacoes.append({
+                    'ativo': ativo,
+                    'operacao': operacao,
+                    'quantidade': quantidade,
+                    'preco': preco,
+                    'valor': sinal * valor_total
+                })
             
                     
         # Cria dataframe das transações
-        self.transacoes_expandidas = pd.DataFrame(transacoes)
-        
-        # Consolida transações por ativo e tipo de operação
-        self.transacoes = self.transacoes_expandidas.groupby(['ativo', 'operacao']).sum()[['quantidade','valor']]
-        self.transacoes['preco'] = abs(self.transacoes['valor']) / self.transacoes['quantidade']
-        self.transacoes.reset_index(inplace = True)
+        if transacoes:
+            self.transacoes_expandidas = pd.DataFrame(transacoes)
+            
+            self.transacoes = self.transacoes_expandidas.groupby(['ativo', 'operacao']).sum()[['quantidade','valor']]
+            self.transacoes['preco'] = abs(self.transacoes['valor']) / self.transacoes['quantidade']
+            self.transacoes.reset_index(inplace = True)
+        else:
+            self.transacoes_expandidas = pd.DataFrame(columns=['ativo', 'operacao', 'quantidade', 'preco', 'valor'])
+            self.transacoes = pd.DataFrame(columns=['ativo', 'operacao', 'quantidade', 'valor', 'preco'])
         
 
     ############################################################################
@@ -553,4 +671,3 @@ class LoteNotaCorretagem():
             # TODO: raise exception or return error?
 
         
-
