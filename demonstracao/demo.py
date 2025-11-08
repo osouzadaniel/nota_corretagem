@@ -14,7 +14,7 @@ from nota_corretagem import LoteNotaCorretagem
 if len(sys.argv) > 1:
     fname = sys.argv[1]
 else:
-    fname = 'nota_itau2.pdf'
+    fname = 'nota_itau.pdf'
 
 arquivo = (path_root / 'arquivos' / fname).resolve()
 
